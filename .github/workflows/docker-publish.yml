@@ -2,7 +2,7 @@ name: Build and push Docker image
 
 on:
   push:
-    branches: [edge]
+    branches: [feature/multi-category]
   workflow_dispatch:
 
 jobs:
