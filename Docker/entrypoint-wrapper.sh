@@ -1,52 +1,62 @@
 #!/bin/sh
 # FreshRSS multi-category entrypoint wrapper
-# Auto-configures Fever API key on first start if FRESHRSS_API_PASSWORD is set.
+# Auto-configures Fever API key, then hands off to the original entrypoint.
 
-# Call the original entrypoint first (it handles install, user creation, cron, apache)
-/var/www/FreshRSS/Docker/entrypoint.sh "$@" &
-ORIG_PID=$!
+setup_fever() {
+    local user="$1"
+    local pass="$2"
 
-# Wait for FreshRSS data to be initialized (up to 30s)
-if [ -n "$FRESHRSS_API_PASSWORD" ] && [ -n "$FRESHRSS_DEFAULT_USER" ]; then
-    TRIES=0
-    while [ $TRIES -lt 30 ]; do
-        if [ -f "/var/www/FreshRSS/data/users/${FRESHRSS_DEFAULT_USER}/config.php" ]; then
-            break
-        fi
-        sleep 1
-        TRIES=$((TRIES + 1))
-    done
+    # Set API password
+    php /var/www/FreshRSS/cli/update-user.php \
+        --user "$user" --api-password "$pass" >/dev/null 2>&1
 
-    if [ -f "/var/www/FreshRSS/data/users/${FRESHRSS_DEFAULT_USER}/config.php" ]; then
-        # Set API password (idempotent)
-        php /var/www/FreshRSS/cli/update-user.php \
-            --user "$FRESHRSS_DEFAULT_USER" \
-            --api-password "$FRESHRSS_API_PASSWORD" \
-            >/dev/null 2>&1
-
-        # Create Fever key file
-        php -r "
+    # Create Fever key file
+    php -r "
 define('FRESHRSS_PATH', '/var/www/FreshRSS');
 define('DATA_PATH', '/var/www/FreshRSS/data');
 require '/var/www/FreshRSS/constants.php';
 require LIB_PATH.'/lib_rss.php';
 FreshRSS_Context::initSystem();
-FreshRSS_Context::initUser('${FRESHRSS_DEFAULT_USER}');
+FreshRSS_Context::initUser('${user}');
 \$salt = FreshRSS_Context::systemConf()->salt;
 \$feverKey = FreshRSS_Context::userConf()->feverKey;
 if (empty(\$feverKey)) { exit(1); }
-\$keyHash = sha1(\$salt);
 \$dir = DATA_PATH.'/fever';
 @mkdir(\$dir, 0755, true);
 chown(\$dir, 'www-data');
+\$keyHash = sha1(\$salt);
 \$keyFile = \$dir.'/.key-'.\$keyHash.'-'.\$feverKey.'.txt';
-file_put_contents(\$keyFile, '${FRESHRSS_DEFAULT_USER}');
+file_put_contents(\$keyFile, '${user}');
 chown(\$keyFile, 'www-data');
-echo '✅ Fever key configured for ${FRESHRSS_DEFAULT_USER}' . PHP_EOL;
+echo '✅ Fever key configured for ${user}' . PHP_EOL;
 " 2>/dev/null
-    else
-        echo "⚠️  Fever setup skipped: user config not found after 30s"
-    fi
+}
+
+# Run original FreshRSS entrypoint (handles install, user creation, permissions)
+# We replace ourselves with it at the end, but first we intercept to add Fever setup.
+# Strategy: source the entrypoint logic up to the exec, then do our setup, then exec.
+
+# Run the original entrypoint in a subshell (it will exec apache, so we must fork)
+# Instead: call original entrypoint as a pre-hook only for setup, then exec apache ourselves.
+
+# Actually: run entrypoint.sh but override the final exec by trapping it.
+# Simplest correct approach: just exec the original entrypoint but inject a background waiter.
+
+if [ -n "$FRESHRSS_API_PASSWORD" ] && [ -n "$FRESHRSS_DEFAULT_USER" ]; then
+    # Wait for user config to appear, then set up Fever (runs in background)
+    (
+        TRIES=0
+        while [ $TRIES -lt 60 ]; do
+            if [ -f "/var/www/FreshRSS/data/users/${FRESHRSS_DEFAULT_USER}/config.php" ]; then
+                setup_fever "$FRESHRSS_DEFAULT_USER" "$FRESHRSS_API_PASSWORD"
+                exit 0
+            fi
+            sleep 1
+            TRIES=$((TRIES + 1))
+        done
+        echo "⚠️  Fever setup timed out: user config not found" >&2
+    ) &
 fi
 
-wait $ORIG_PID
+# Hand off to original entrypoint (which will exec apache and block)
+exec /var/www/FreshRSS/Docker/entrypoint.sh "$@"
