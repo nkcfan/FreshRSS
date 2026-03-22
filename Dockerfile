@@ -30,3 +30,10 @@ RUN chown www-data:www-data \
     /var/www/FreshRSS/app/SQL/install.sql.sqlite.php \
     /var/www/FreshRSS/app/Services/ImportService.php \
     /var/www/FreshRSS/p/api/fever.php
+
+# Entrypoint wrapper: auto-configures Fever API key on first start
+COPY Docker/entrypoint-wrapper.sh /entrypoint-wrapper.sh
+RUN chmod +x /entrypoint-wrapper.sh
+
+ENTRYPOINT ["/entrypoint-wrapper.sh"]
+CMD ["apache2-foreground"]
