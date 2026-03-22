@@ -1,18 +1,15 @@
-name: freshrss
-
 services:
   freshrss:
     image: ghcr.io/nkcfan/freshrss-multi-category:latest
     container_name: freshrss
     restart: unless-stopped
     ports:
-      - "8080:80"
+      - '8080:80'
     volumes:
       - freshrss_data:/var/www/FreshRSS/data
     environment:
       TZ: America/Los_Angeles
-      CRON_MIN: "*/30"          # refresh feeds every 30 min
-      FRESHRSS_ENV: production
-
+      CRON_MIN: '*/30'
+      FRESHRSS_API_PASSWORD: changeme   # set this to your Reeder/API password
 volumes:
   freshrss_data:
