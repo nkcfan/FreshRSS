@@ -53,6 +53,10 @@ file_put_contents(\$keyFile, '$user');
 chown(\$keyFile, 'www-data');
 echo '✅ Fever API enabled + key configured for $user' . PHP_EOL;
 " 2>/dev/null
+
+    # Final chown: cover everything created by PHP CLI as root (cache, user dirs, config)
+    chown -R www-data:www-data /var/www/FreshRSS/data 2>/dev/null
+    echo "✅ Ownership fixed for /var/www/FreshRSS/data" >&2
 }
 
 if [ -n "$FRESHRSS_API_PASSWORD" ]; then
